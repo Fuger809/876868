@@ -106,8 +106,9 @@ local orbitspeedslider = Tabs.Extra:CreateSlider("orbitspeed", { Title = "Orbit 
 local itemheightslider = Tabs.Extra:CreateSlider("itemheight", { Title = "Item Height", Min = -3, Max = 10, Rounding = 1, Default = 3 })
 --{END OF TAB ELEMENTS}
 
+
 -- ============================================
--- TAB: Gold BV (v5.6 — hover-ground + instant break + hotbar equip + slope/retarget fixes)
+-- TAB: Gold BV (v5.6-lite — hover, instant break, hotbar equip; без ретаргета)
 -- ============================================
 do
     local PFS       = game:GetService("PathfindingService")
@@ -118,7 +119,7 @@ do
     -- Tab
     Tabs.GoldBV = Tabs.GoldBV or Window:AddTab({ Title = "Gold BV", Icon = "compass" })
 
-    -- UI
+    -- UI (удалены ретаргет и коэффициенты)
     Tabs.GoldBV:CreateToggle("aw_on",        { Title = "Auto path to Gold (BV)", Default = false })
     Tabs.GoldBV:CreateSlider("aw_rng",       { Title = "Scan range",     Min=80,  Max=800, Rounding=0, Default=300 })
     Tabs.GoldBV:CreateSlider("aw_spd",       { Title = "Speed (BV)",     Min=8,   Max=60,  Rounding=0, Default=20 })
@@ -135,16 +136,6 @@ do
     Tabs.GoldBV:CreateToggle("aw_autoeq",    { Title = "Auto-equip tools (God Pick/Axe)", Default = true })
     Tabs.GoldBV:CreateToggle("aw_prescan",   { Title = "Prescan whole map before start", Default = true })
     Tabs.GoldBV:CreateToggle("aw_prefetch",  { Title = "Prefetch next target while breaking", Default = true })
-    Tabs.GoldBV:CreateToggle("aw_retarget",  { Title = "Retarget on the fly", Default = true })
-    Tabs.GoldBV:CreateSlider("aw_ret_pct",   { Title = "Retarget better by (%)", Min=1, Max=50, Rounding=0, Default=35 })
-    Tabs.GoldBV:CreateSlider("aw_ret_abs",   { Title = "Retarget better by (studs)", Min=1, Max=80, Rounding=0, Default=35 })
-    Tabs.GoldBV:CreateSlider("aw_ret_int",   { Title = "Retarget check interval (s)", Min=0, Max=2, Rounding=2, Default=1.2 })
-
-    Tabs.GoldBV:CreateSlider("aw_k_up",      { Title = "Cost coeff: climb (U)",  Min=0, Max=2,   Rounding=2, Default=0.6 })
-    Tabs.GoldBV:CreateSlider("aw_k_down",    { Title = "Cost coeff: drop (D)",   Min=0, Max=2,   Rounding=2, Default=0.2 })
-    Tabs.GoldBV:CreateSlider("aw_k_jump",    { Title = "Cost coeff: jump",       Min=0, Max=3,   Rounding=2, Default=1.2 })
-    Tabs.GoldBV:CreateSlider("aw_k_turn",    { Title = "Cost coeff: turns",      Min=0, Max=1.5, Rounding=2, Default=0.25 })
-    Tabs.GoldBV:CreateSlider("aw_k_water",   { Title = "Cost coeff: water len",  Min=0, Max=3,   Rounding=2, Default=1.0 })
 
     Tabs.GoldBV:CreateToggle("aw_timer",     { Title = "Show respawn timers", Default = true })
     Tabs.GoldBV:CreateSlider("aw_respawn",   { Title = "Respawn time (s)", Min=30, Max=900, Rounding=0, Default=180 })
@@ -238,9 +229,9 @@ do
         end
     end)
 
-    -- Live cache + spatial hash
+    -- Live cache + spatial hash (только gold)
     local CELL=96
-    local goldCache, goldList, grid, entrances = {}, {}, {}, {}
+    local goldCache, goldList, grid = {}, {}, {}
     local prescanned=false
 
     local function tclear(t) if table.clear then table.clear(t) else for k in pairs(t) do t[k]=nil end end end
@@ -263,23 +254,14 @@ do
         pp:GetPropertyChangedSignal("Position"):Connect(function() rec.pos=pp.Position; gridRemove(rec); gridAdd(rec) end)
     end
     local function fullScan()
-        for k in pairs(goldCache) do goldCache[k]=nil end; tclear(goldList); tclear(grid); tclear(entrances)
+        for k in pairs(goldCache) do goldCache[k]=nil end; tclear(goldList); tclear(grid)
         for _,inst in ipairs(Workspace:GetDescendants()) do
-            if inst:IsA("Model") then
-                if inst.Name=="Gold Node" then addGold(inst)
-                else
-                    local n=inst.Name:lower()
-                    if n:find("cave") or n:find("entrance") or n:find("mine") then
-                        local pp=inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart"); if pp then entrances[#entrances+1]={model=inst,pos=pp.Position} end
-                    end
-                end
-            end
+            if inst:IsA("Model") and inst.Name=="Gold Node" then addGold(inst) end
         end
         prescanned=true
         if Library and Library.Notify then
-            Library:Notify({Title="Gold BV", Content=("Prescan done: %d gold, %d entrances"):format(#goldList,#entrances), Duration=6})
+            Library:Notify({Title="Gold BV", Content=("Prescan done: %d gold"):format(#goldList), Duration=4})
         end
-        print(("[GoldBV] Prescan: %d gold, %d entrances"):format(#goldList,#entrances))
     end
     Workspace.DescendantAdded:Connect(function(inst) if inst:IsA("Model") and inst.Name=="Gold Node" then task.defer(function() addGold(inst) end) end end)
     Workspace.DescendantRemoving:Connect(function(inst)
@@ -300,7 +282,7 @@ do
         return out
     end
 
-    -- Path + scoring
+    -- Path (простой выбор по длине)
     local function buildPath(fromPos,toPos)
         local pf=PFS:CreatePath({AgentRadius=2,AgentHeight=5,AgentCanJump=true,WaypointSpacing=2})
         local ok=pcall(function() pf:ComputeAsync(fromPos,toPos) end)
@@ -308,47 +290,27 @@ do
         return nil,nil
     end
     local function wpsToPoints(wps) local pts=table.create(#wps) for i=1,#wps do pts[i]=wps[i].Position end return pts end
+    local function pathLenPts(pts) local L=0 for i=2,#pts do L += (pts[i]-pts[i-1]).Magnitude end return L end
 
-    local rcParams = RaycastParams.new(); rcParams.FilterType=Enum.RaycastFilterType.Blacklist
-    local function waterLenOnSegment(a,b)
-        local steps=math.max(1, math.floor((b-a).Magnitude/12)); local len=0
-        for i=1,steps do
-            local p=a+(b-a)*(i/steps); local origin=p+Vector3.new(0,40,0); local dir=Vector3.new(0,-120,0)
-            rcParams.FilterDescendantsInstances={plr.Character}
-            local hit=Workspace:Raycast(origin,dir,rcParams)
-            if hit and hit.Material==Enum.Material.Water then len += ((b-a).Magnitude/steps) end
-        end
-        return len
-    end
-    local function scorePath(wps)
-        local kU,kD,kJ,kT,kW = Options.aw_k_up.Value, Options.aw_k_down.Value, Options.aw_k_jump.Value, Options.aw_k_turn.Value, Options.aw_k_water.Value
-        local L,U,D,Jumps,Turns,Wlen,prevDir = 0,0,0,0,0,0,nil
-        for i=2,#wps do
-            local a=wps[i-1].Position; local b=wps[i].Position; local seg=b-a; L+=seg.Magnitude
-            local dy=b.Y-a.Y; if dy>0 then U+=dy else D+=-dy end
-            if wps[i].Action==Enum.PathWaypointAction.Jump then Jumps+=1 end
-            if prevDir then local dir=seg.Unit; local dot=math.clamp(prevDir:Dot(dir),-1,1); local ang=math.acos(dot); Turns+=ang; prevDir=dir else prevDir=seg.Unit end
-            Wlen += waterLenOnSegment(a,b)
-        end
-        local J=L + kU*U + kD*D + kJ*Jumps + kT*Turns*10 + kW*Wlen
-        return J,L
-    end
     local function bestPlan(fromPos, range, excludeModel)
         local cands=gatherCandidates(fromPos, range); if #cands==0 then return nil end
-        local best,bestJ; local bestDirect; local LIMIT=math.min(12,#cands)
+        local best, bestL; local bestDirect; local LIMIT=math.min(12,#cands)
         for i=1,LIMIT do
             local c=cands[i]; if c.model~=excludeModel then
-                local pf,wps=buildPath(fromPos, c.pos)
-                if wps then local J,L=scorePath(wps); if not bestJ or J<bestJ then bestJ=J; best={pts=wpsToPoints(wps), target=c, J=J, L=L} end
-                else bestDirect = bestDirect or {pts={fromPos,c.pos}, target=c, direct=true, J=(fromPos-c.pos).Magnitude} end
+                local _,wps=buildPath(fromPos, c.pos)
+                if wps then
+                    local pts = wpsToPoints(wps)
+                    local L = pathLenPts(pts)
+                    if not bestL or L < bestL then bestL=L; best={pts=pts, target=c, L=L} end
+                else
+                    bestDirect = bestDirect or {pts={fromPos,c.pos}, target=c, direct=true}
+                end
             end
         end
         return best or bestDirect
     end
 
     -- ---------- auto-equip tools (hotbar-aware) ----------
-    local GOD_PICK = "God Pick"
-    local GOD_AXE  = "God Axe"
     local PICK_CANDIDATES = { "God Pick","Magnetite Pick","Steel Pick","Iron Pick","Stone Pick","Pickaxe","Pick" }
     local AXE_CANDIDATES  = { "God Axe","Magnetite Axe","Steel Axe","Iron Axe","Stone Axe","Axe" }
 
@@ -410,7 +372,6 @@ do
             if d:IsA("TextLabel") then
                 for _,want in ipairs(nameList) do
                     if d.Text==want then found = readSlotIndex(d); if found then break end end
-                end
             end
             if found then break end
         end
@@ -433,14 +394,13 @@ do
         for _,nm in ipairs(nameList) do if equipViaName(nm) then return true end end
         local idx = findHotbarSlotIndexByNames(nameList)
         if idx and selectHotbarSlot(idx) then return true end
-        -- fallback Backpack/Tool
         local char, bag = plr.Character, plr.Backpack
         if char then for _,nm in ipairs(nameList) do local t=char:FindFirstChild(nm) if t and t:IsA("Tool") then local h=awHum() if h then local ok=pcall(function() h:EquipTool(t) end) if ok then return true end end end end end
         if bag  then for _,nm in ipairs(nameList) do local t=bag:FindFirstChild(nm)  if t and t:IsA("Tool") then local h=awHum() if h then local ok=pcall(function() h:EquipTool(t) end) if ok then return true end end end end end
         return false
     end
 
-    -- эвристика: есть ли «топорная» преграда по лучу
+    -- эвристика: нужна ли «топорная» дорога
     local function isAxeBreakable(model)
         if not model then return false end
         local tt = model:GetAttribute("ToolType") or model:GetAttribute("WeakTo") or model:GetAttribute("Tool")
@@ -467,7 +427,7 @@ do
     local rcGround = RaycastParams.new()
     rcGround.FilterType = Enum.RaycastFilterType.Blacklist
 
-    -- BV (hover-ground + smooth) --------------------------------
+    -- BV (hover-ground + smooth)
     local function ensureBV(hrp)
         local bv=hrp:FindFirstChild("_AW_BV"); if not bv then bv=Instance.new("BodyVelocity"); bv.Name="_AW_BV"; bv.Parent=hrp end
         bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
@@ -484,7 +444,6 @@ do
 
         while hrp.Parent and token.alive do
             local cur  = hrp.Position
-            local diff = goalPos - cur
 
             -- target Y = ground + hover
             rcGround.FilterDescendantsInstances = { plr.Character }
@@ -508,7 +467,6 @@ do
                 return true
             end
 
-            -- smooth approach & velocity lerp (less micro steps)
             local flat = Vector3.new(v3.X, needY and v3.Y or 0, v3.Z)
             local slow = math.clamp(dist / 8, 0.35, 1.0)
             local want = flat.Unit * (speed * slow)
@@ -539,11 +497,10 @@ do
         return false
     end
 
-    -- followPath (no direct retarget + skip retarget near target + early break)
+    -- followPath (без ретаргета; ранний break)
     local function followPathBV(hrp, plan, speed, token, hitDist)
         hitDist = hitDist or Options.aw_hit.Value
-        local tol=1.6  -- чуть расслабленный допуск
-        local lastCheck=time()
+        local tol=1.6
         drawGPS(plan.pts)
 
         local function targetPos()
@@ -557,24 +514,7 @@ do
             if not token.alive then return "stop" end
             local tp=targetPos()
 
-            -- уже рядом — сразу ломаем
             if (hrp.Position - tp).Magnitude <= hitDist then clearGPS(); return "break_now" end
-
-            -- ретаргет не считаем вплотную к цели
-            if (hrp.Position - tp).Magnitude > (hitDist + 4) then
-                if Options.aw_retarget.Value and (time()-lastCheck)>=Options.aw_ret_int.Value then
-                    lastCheck=time()
-                    local here=hrp.Position
-                    local newPlan=bestPlan(here, Options.aw_rng.Value, plan.target and plan.target.model)
-                    if newPlan and (not newPlan.direct) and plan.J then
-                        local pctBetter=(plan.J - newPlan.J)
-                        local absBetter=(plan.L or 0)-(newPlan.L or newPlan.J)
-                        if pctBetter>=plan.J*(Options.aw_ret_pct.Value/100) or absBetter>=Options.aw_ret_abs.Value then
-                            token.retargetPlan=newPlan; clearGPS(); return "retarget"
-                        end
-                    end
-                end
-            end
 
             if not moveToBV(hrp, plan.pts[i], speed, tol, token) then
                 if not token.alive then return "stop" end
@@ -586,7 +526,7 @@ do
         clearGPS(); return "ok"
     end
 
-    -- ломание — мгновенный первый удар, префетч в фоне
+    -- ломание — мгновенный удар, префетч следующей цели
     local function breakGold(model, token)
         if not model or not model.Parent then return nil end
         local hrp = awRoot(); if not hrp then return nil end
@@ -606,24 +546,20 @@ do
             if not eid or not pp then break end
             lastPos = pp.Position
 
-            -- дожаться до реальной дистанции и не ждать
             local dist = (hrp.Position - pp.Position).Magnitude
             if dist > hitRadius then
                 moveToBV(hrp, pp.Position, Options.aw_spd.Value, hitRadius, token)
                 if not token.alive then break end
             end
 
-            -- авто-экип не блокирует свинг
             local ice = iceNear(pp.Position, 9)
             local wanted = (ice and PICK_CANDIDATES) or chooseToolListForPath(model, pp.Position)
             if Options.aw_autoeq.Value then task.spawn(function() ensureAnyTool(wanted) end) end
 
-            -- мгновенный swing
             if time() - lastSwing >= cd then
                 swing(ice and {ice, eid} or {eid})
                 lastSwing = time()
 
-                -- префетч асинхронно после первого удара
                 if not firstHitDone then
                     firstHitDone = true
                     if Options.aw_prefetch.Value then
@@ -658,9 +594,7 @@ do
                     local plan=bestPlan(hrp.Position, Options.aw_rng.Value)
                     if plan then
                         local status=followPathBV(hrp, plan, Options.aw_spd.Value, job, Options.aw_hit.Value)
-                        if status=="retarget" and job.retargetPlan then
-                            followPathBV(hrp, job.retargetPlan, Options.aw_spd.Value, job, Options.aw_hit.Value)
-                        elseif status=="break_now" or status=="ok" then
+                        if status=="break_now" or status=="ok" then
                             local model=plan.target and plan.target.model
                             if model then
                                 local nextPlan=breakGold(model, job)
@@ -687,8 +621,6 @@ do
     plr.CharacterAdded:Connect(function() stopAll() end)
     Players.PlayerRemoving:Connect(function(p) if p==plr then stopAll() end end)
 end
-
-
 
 
 
